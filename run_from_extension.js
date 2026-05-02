@@ -21,11 +21,11 @@ const path = require('path');
     // Giả lập các biến global nếu code của bạn yêu cầu
     window.allJobs = [];
     window.currentPage = 1;
-    window.maxPages = 2; // Bạn có thể chỉnh lại
+    window.maxPages =  1; // Bạn có thể chỉnh lại
     window.isCrawling = true;
     
     // Giả lập hàm updateStatus để không bị lỗi console
-    window.updateStatus = (msg) => console.log("Status:", msg);
+    window.updateStatus = (msg) => console.log("LOG:", msg);
     window.appendToTable = (job) => console.log("Đã lấy job:", job.title);
     
     // Giả lập chrome.storage.local để code không bị crash
