@@ -3,70 +3,49 @@ const fs = require('fs');
 const path = require('path');
 
 (async () => {
-  // 1. Khởi tạo trình duyệt
+  console.log("Bắt đầu khởi động trình duyệt ảo...");
   const browser = await chromium.launch({ headless: true });
   const page = await browser.newPage();
 
-  // 2. Truy cập Indeed
-  await page.goto('https://vn.indeed.com/jobs?q=ke+toan'); 
-  console.log("Đã truy cập Indeed...");
+  // Chuyển tiếp log từ trình duyệt về terminal GitHub
+  page.on('console', msg => console.log('BROWSER:', msg.text()));
 
-  // 3. Đọc nội dung file content.js của bạn
-  const contentJsPath = path.join(__dirname, 'content.js');
-  const contentJsCode = fs.readFileSync(contentJsPath, 'utf8');
+  try {
+    await page.goto('https://vn.indeed.com/jobs?q=ke+toan', { waitUntil: 'networkidle' });
+    console.log("Đã truy cập Indeed.");
 
-  // 4. "Bơm" code vào trang web và thực thi hàm crawlPage
-  // Lưu ý: Chúng ta cần định nghĩa các biến môi trường mà extension thường có
-  await page.evaluate((jsCode) => {
-    // Giả lập các biến global nếu code của bạn yêu cầu
-    window.allJobs = [];
-    window.currentPage = 1;
-    window.maxPages =  1; // Bạn có thể chỉnh lại
-    window.isCrawling = true;
-    
-    // Giả lập hàm updateStatus để không bị lỗi console
-    window.updateStatus = (msg) => console.log("LOG:", msg);
-    window.appendToTable = (job) => console.log("Đã lấy job:", job.title);
-    
-    // Giả lập chrome.storage.local để code không bị crash
-    window.chrome = {
-      storage: {
-        local: {
-          set: (data) => { console.log("Đã lưu vào storage ảo"); }
-        }
-      }
-    };
+    const contentJsPath = path.join(__dirname, 'content.js');
+    const contentJsCode = fs.readFileSync(contentJsPath, 'utf8');
 
-    // Thực thi toàn bộ code trong content.js
-    const script = document.createElement('script');
-    script.textContent = jsCode;
-    document.body.appendChild(script);
-  }, contentJsCode);
+    // Nạp code và giả lập nhấn nút Bắt đầu
+    await page.evaluate((jsCode) => {
+      // Giả lập chrome storage để không lỗi
+      window.chrome = { storage: { local: { set: () => {}, get: (k, cb) => cb({}) } } };
+      
+      const script = document.createElement('script');
+      script.textContent = jsCode;
+      document.body.appendChild(script);
 
-  await page.evaluate(async () => {
-      // 1. Đảm bảo các biến cần thiết được khởi tạo
-      window.maxPages = 5; // Hoặc số trang bạn muốn crawl tự động
-      window.isCrawling = true;
-  
-      // 2. Thay vì gọi thẳng crawlPage(), chúng ta giả lập logic của nút Start
-      // Việc này giúp thiết lập đầy đủ trạng thái trước khi quét
+      // Tự động gọi hàm bắt đầu
       if (typeof startCrawl === 'function') {
-        console.log("Kích hoạt startCrawl()...");
-        await startCrawl();
-      } else if (typeof crawlPage === 'function') {
-        console.log("Kích hoạt trực tiếp crawlPage()...");
-        await crawlPage();
-      } else {
-        console.error("Không tìm thấy hàm bắt đầu nào!");
+        startCrawl();
       }
-    });
+    }, contentJsCode);
 
-  // 6. Lấy dữ liệu allJobs sau khi crawl xong
-  const results = await page.evaluate(() => window.allJobs);
-  
-  // 7. Lưu kết quả
-  fs.writeFileSync('crawled_results.json', JSON.stringify(results, null, 2));
-  console.log(`Hoàn thành! Đã lưu ${results.length} jobs.`);
+    // Đợi cho đến khi biến isCrawling chuyển về false (xong việc)
+    console.log("Đang quét dữ liệu, vui lòng đợi...");
+    await page.waitForFunction(() => window.isCrawling === false, { timeout: 300000 });
 
-  await browser.close();
+    // Lấy dữ liệu cuối cùng
+    const results = await page.evaluate(() => window.allJobs);
+    
+    // Lưu kết quả vào file
+    fs.writeFileSync('data.json', JSON.stringify(results, null, 2));
+    console.log(`Thành công! Đã thu thập ${results.length} jobs.`);
+
+  } catch (error) {
+    console.error("Lỗi tiến trình:", error);
+  } finally {
+    await browser.close();
+  }
 })();
