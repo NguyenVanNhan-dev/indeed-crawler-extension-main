@@ -43,12 +43,23 @@ const path = require('path');
     document.body.appendChild(script);
   }, contentJsCode);
 
-  // 5. Gọi hàm crawlPage() từ trong content.js
   await page.evaluate(async () => {
-    if (typeof crawlPage === 'function') {
-      await crawlPage();
-    }
-  });
+      // 1. Đảm bảo các biến cần thiết được khởi tạo
+      window.maxPages = 5; // Hoặc số trang bạn muốn crawl tự động
+      window.isCrawling = true;
+  
+      // 2. Thay vì gọi thẳng crawlPage(), chúng ta giả lập logic của nút Start
+      // Việc này giúp thiết lập đầy đủ trạng thái trước khi quét
+      if (typeof startCrawl === 'function') {
+        console.log("Kích hoạt startCrawl()...");
+        await startCrawl();
+      } else if (typeof crawlPage === 'function') {
+        console.log("Kích hoạt trực tiếp crawlPage()...");
+        await crawlPage();
+      } else {
+        console.error("Không tìm thấy hàm bắt đầu nào!");
+      }
+    });
 
   // 6. Lấy dữ liệu allJobs sau khi crawl xong
   const results = await page.evaluate(() => window.allJobs);
