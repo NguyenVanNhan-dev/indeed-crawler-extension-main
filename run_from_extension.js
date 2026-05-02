@@ -15,12 +15,10 @@ const path = require('path');
   
   const page = await context.newPage();
 
-  // Chuyển tiếp log từ Browser về Terminal để debug
+  // Chuyển tiếp log từ Browser về Terminal
   page.on('console', msg => {
     const text = msg.text();
-    if (text.includes("[Indeed Crawler]")) {
-      console.log(text);
-    }
+    if (text.includes("[Indeed Crawler]")) console.log(text);
   });
 
   try {
@@ -28,86 +26,86 @@ const path = require('path');
     console.log(`🔗 Đang truy cập: ${searchUrl}`);
     await page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
 
-    // Đọc nội dung tệp content.js mà bạn đã cung cấp
     const contentJsPath = path.join(__dirname, 'content.js');
-    let contentJsCode = fs.readFileSync(contentJsPath, 'utf8');
+    const contentJsCode = fs.readFileSync(contentJsPath, 'utf8');
 
-    await page.evaluate((jsCode) => {
-      // 1. GIẢ LẬP MÔI TRƯỜNG CHROME
-      window.chrome = {
-        storage: {
-          local: {
-            set: (data, cb) => { if (cb) cb(); },
-            get: (keys, cb) => { cb({}); },
-            clear: () => {}
-          }
-        },
-        runtime: {
-          sendMessage: (msg, sendResponse) => {
-            // Giả lập fetch detail để lấy lương nếu cần
-            if (msg.action === "fetchJobHTML") {
-              fetch(msg.url)
-                .then(r => r.text())
-                .then(html => sendResponse({ success: true, html }))
-                .catch(() => sendResponse({ success: false }));
-              return true; // Báo hiệu bất đồng bộ
-            }
-            if (msg.action === "saveToCSV") {
-              console.log("[Indeed Crawler] Yêu cầu xuất CSV nhận được.");
+    // Hàm thực thi việc "bơm" code và chạy crawl
+    const injectAndStart = async (targetMaxPages) => {
+      await page.evaluate(({ jsCode, targetMaxPages }) => {
+        // Giả lập môi trường Chrome
+        window.chrome = {
+          storage: { local: { set: (d, cb) => cb?.(), get: (k, cb) => cb({}), clear: () => {} } },
+          runtime: {
+            sendMessage: (msg, sendResponse) => {
+              if (msg.action === "fetchJobHTML") {
+                fetch(msg.url).then(r => r.text()).then(h => sendResponse({ success: true, html: h })).catch(() => sendResponse({ success: false }));
+                return true;
+              }
             }
           }
-        }
-      };
+        };
 
-      // 2. NGĂN CHẶN LỖI UI (DOM NULL)
-      // Ghi đè hàm tạo giao diện để không chạy trên server
-      window.createPanel = () => { console.log("[Indeed Crawler] Bỏ qua tạo giao diện Panel."); };
+        // Chặn lỗi UI
+        window.createPanel = () => {};
+        window.updateStatus = (t) => console.log(`[Indeed Crawler] STATUS: ${t}`);
+        window.appendToTable = (j) => console.log(`[Indeed Crawler] Đã lấy: ${j.title}`);
 
-      // Ghi đè hàm cập nhật trạng thái (Chặn lỗi textContent of null)
-      window.updateStatus = (text) => {
-        console.log(`[Indeed Crawler] STATUS: ${text}`);
-      };
+        // Nạp code content.js
+        const script = document.createElement('script');
+        script.textContent = jsCode;
+        document.body.appendChild(script);
 
-      // Ghi đè hàm thêm vào bảng (Chặn lỗi appendChild of null)
-      window.appendToTable = (job) => {
-        console.log(`[Indeed Crawler] Đã thêm job: ${job.title} - ${job.company}`);
-      };
+        // Ghi đè cấu hình và chạy
+        window.maxPages = targetMaxPages;
+        if (typeof startCrawl === 'function') startCrawl();
+      }, { jsCode, targetMaxPages });
+    };
 
-      // 3. NẠP CODE CONTENT.JS VÀO TRANG
-      const script = document.createElement('script');
-      script.textContent = jsCode;
-      document.body.appendChild(script);
+    const targetMaxPages = 3;
+    await injectAndStart(targetMaxPages);
 
-      // 4. TỰ ĐỘNG CHỈNH SỐ TRANG VÀ CHẠY
-      window.maxPages = 3; // Bạn có thể chỉnh số trang ở đây
-      if (typeof startCrawl === 'function') {
-        startCrawl();
+    // VÒNG LẶP KIỂM TRA THÔNG MINH
+    let isFinished = false;
+    let timeoutCounter = 0;
+    const maxWaitTime = 20; // Đợi tối đa ~100 giây (20 lần * 5 giây)
+
+    while (!isFinished && timeoutCounter < maxWaitTime) {
+      await new Promise(r => setTimeout(r, 5000)); // Nghỉ 5s mỗi lần kiểm tra
+
+      const status = await page.evaluate(() => {
+        return {
+          isCrawling: window.isCrawling,
+          hasVars: typeof window.allJobs !== 'undefined',
+          jobCount: window.allJobs ? window.allJobs.length : 0
+        };
+      }).catch(() => ({ isCrawling: null, hasVars: false }));
+
+      if (status.isCrawling === false) {
+        console.log("✅ Script báo cáo đã hoàn thành.");
+        isFinished = true;
+      } else if (!status.hasVars) {
+        console.log("🔄 Phát hiện trang bị reload/chuyển trang. Đang nạp lại script...");
+        await injectAndStart(targetMaxPages);
       } else {
-        console.log("[Indeed Crawler] LỖI: Không tìm thấy hàm startCrawl.");
+        console.log(`⏳ Đang thu thập... Hiện có: ${status.jobCount} jobs`);
       }
-    }, contentJsCode);
+      
+      timeoutCounter++;
+    }
 
-    // 5. ĐỢI CHO ĐẾN KHI HOÀN THÀNH (Dựa vào biến isCrawling trong content.js)
-    console.log("⏳ Đang thu thập dữ liệu...");
-    
-    // Đợi tối đa 10 phút, kiểm tra mỗi 5 giây
-    await page.waitForFunction(() => window.isCrawling === false, { timeout: 600000 });
-
-    // 6. TRÍCH XUẤT DỮ LIỆU CUỐI CÙNG
+    // Trích xuất kết quả
     const finalData = await page.evaluate(() => window.allJobs);
-    
     if (finalData && finalData.length > 0) {
-      const outputPath = path.join(__dirname, 'data.json');
-      fs.writeFileSync(outputPath, JSON.stringify(finalData, null, 2), 'utf8');
-      console.log(`✅ Thành công! Đã thu thập ${finalData.length} công việc và lưu vào data.json`);
+      fs.writeFileSync('data.json', JSON.stringify(finalData, null, 2), 'utf8');
+      console.log(`✅ Hoàn thành! Thu thập được ${finalData.length} jobs.`);
     } else {
-      console.log("❌ Không thu thập được dữ liệu nào.");
+      console.log("❌ Không thu thập được dữ liệu.");
     }
 
   } catch (err) {
-    console.error("⚠️ Lỗi trong quá trình thực thi:", err.message);
+    console.error("⚠️ Lỗi:", err.message);
   } finally {
     await browser.close();
-    console.log("🏁 Đã đóng trình duyệt.");
+    console.log("🏁 Kết thúc.");
   }
 })();
