@@ -1,0 +1,32 @@
+name: Tự động Crawl từ Content JS
+on:
+  schedule:
+    - cron: '30 21 * * *' # 4:30 sáng VN
+  workflow_dispatch:
+
+jobs:
+  crawl:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Cài đặt Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+
+      - name: Cài đặt Playwright
+        run: |
+          npm install playwright
+          npx playwright install chromium
+
+      - name: Chạy script
+        run: node run_from_extension.js
+
+      - name: Lưu dữ liệu
+        run: |
+          git config --global user.name "Bot Crawler"
+          git config --global user.email "bot@github.com"
+          git add crawled_results.json
+          git commit -m "Cập nhật dữ liệu ngày $(date)" || exit 0
+          git push
