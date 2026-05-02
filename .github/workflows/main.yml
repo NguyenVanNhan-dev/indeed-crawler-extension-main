@@ -1,8 +1,7 @@
 name: Tự động Crawl từ Content JS
 on:
-  schedule:
-    - cron: '30 21 * * *' # 4:30 sáng VN
-  workflow_dispatch:
+  repository_dispatch:
+    types: [trigger_crawl]
 
 jobs:
   crawl:
